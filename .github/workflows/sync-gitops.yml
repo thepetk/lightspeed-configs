@@ -1,0 +1,93 @@
+#
+#
+# Copyright Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: Sync GitOps Manifests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "lightspeed-core-configs/lightspeed-stack.yaml"
+      - "llama-stack-configs/config.yaml"
+      - "images.yaml"
+  workflow_dispatch:
+
+jobs:
+  sync-gitops:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: ai-rolling-demo-gitops
+
+      - name: Checkout lightspeed-configs
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout ai-rolling-demo-gitops
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/ai-rolling-demo-gitops
+          ref: development
+          token: ${{ steps.app-token.outputs.token }}
+          path: ai-rolling-demo-gitops
+
+      - name: Generate ConfigMap manifests
+        run: bash scripts/generate-gitops-manifests.sh
+        env:
+          GITOPS_REPO: ${{ github.workspace }}/ai-rolling-demo-gitops
+
+      - name: Copy generated manifests
+        run: |
+          cp generated/lightspeed-stack-config.yaml ai-rolling-demo-gitops/charts/rhdh/templates/lightspeed-stack-config.yaml
+          cp generated/llama-stack-config.yaml ai-rolling-demo-gitops/charts/rhdh/templates/llama-stack-config.yaml
+          cp generated/rolling-demo-sidecars-job.yaml ai-rolling-demo-gitops/charts/rhdh/templates/rolling-demo-sidecars-job.yaml
+
+      - name: Export image versions
+        run: |
+          get_image() {
+            awk -v key="$1" '
+              /^[^[:space:]]/ { in_section = ($0 == key":") }
+              in_section && /^[[:space:]]+image:/ { print $2; exit }
+            ' images.yaml
+          }
+          echo "LLAMA_STACK_IMAGE=$(get_image llama-stack)" >> $GITHUB_ENV
+          echo "LIGHTSPEED_CORE_IMAGE=$(get_image lightspeed-core)" >> $GITHUB_ENV
+          echo "RAG_CONTENT_IMAGE=$(get_image rag-content)" >> $GITHUB_ENV
+
+      - name: Open PR in ai-rolling-demo-gitops
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: ai-rolling-demo-gitops
+          base: development
+          branch: sync/lightspeed-configs
+          commit-message: "(chore): sync lightspeed - llama stack configs from lightspeed-configs@${{ github.sha }}"
+          title: "(chore): update lightspeed configs"
+          body: |
+            ## PR Description
+
+            Automated sync triggered from [${{ github.repository }}@${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}).
+
+            Syncs the configs of `lightspeed-stack-config.yaml`, `llama-stack-config.yaml`, and `rolling-demo-sidecars-job.yaml` with the following image versions:
+            - `llama-stack`: `${{ env.LLAMA_STACK_IMAGE }}`
+            - `lightspeed-core`: `${{ env.LIGHTSPEED_CORE_IMAGE }}`
+            - `rag-content`: `${{ env.RAG_CONTENT_IMAGE }}`
