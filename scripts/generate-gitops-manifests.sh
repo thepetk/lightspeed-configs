@@ -106,5 +106,13 @@ sed \
   -e "s|\"image\": \"[^\"]*/rag-content[^\"]*\"|\"image\": \"${RAG_CONTENT_IMAGE}\"|g" \
   "${SIDECARS_JOB_SRC}" > "${OUTPUT_DIR}/rolling-demo-sidecars-job.yaml"
 
+echo "Updating rag-content image in values.yaml..."
+VALUES_YAML="${GITOPS_REPO}/charts/rhdh/values.yaml"
+if [[ ! -f "${VALUES_YAML}" ]]; then
+  echo "Error: ${VALUES_YAML} not found." >&2
+  exit 1
+fi
+sed -i "s|image: '[^']*/rag-content[^']*'|image: '${RAG_CONTENT_IMAGE}'|g" "${VALUES_YAML}"
+
 echo "Generated manifests:"
 ls -1 "${OUTPUT_DIR}"
